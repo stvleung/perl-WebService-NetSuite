@@ -8,7 +8,7 @@ SYNOPSIS
         my $ns = WebService::NetSuite->new({
             nsrole   => 3,
             nsemail    => 'fred@iparadigms.com',
-            nspassword  => 'Geeg4quu$',
+            nspassword  => 'foobar123',
             nsaccount  => 318610,
             sandbox    => 1,
         });
