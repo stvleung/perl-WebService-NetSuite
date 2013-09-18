@@ -1147,10 +1147,10 @@ WebService::NetSuite - A perl  interface to the NetSuite SuiteTalk (Web Services
     use WebService::NetSuite;
   
     my $ns = WebService::NetSuite->new({
-        nsrole   => 3,
-        nsemail    => 'fred@iparadigms.com',
-        nspassword  => 'Geeg4quu$',
-        nsaccount  => 318610,
+        nsrole     => 3,
+        nsemail    => 'blarg@foo.com',
+        nspassword => 'foobar123',
+        nsaccount  => 123456,
         sandbox    => 1,
     });
 
