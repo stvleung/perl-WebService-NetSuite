@@ -117,6 +117,8 @@ if ($getWsdl->is_success) {
         };
     }
     
+    undef my %recNamespace;
+
     for my $node (@{ $wsdl->[0]->{content}->[0]->{content}->[0]->{content} }) {
         #$node->{attrib}->{namespace} =~ s/^urn:(.*)_(\d+)_(\d+).*$/$1/g;
         $node->{attrib}->{namespace} =~ s/urn://;
@@ -222,17 +224,24 @@ if ($getWsdl->is_success) {
                         
                     }
                 }
-                if ($element->{name} eq 'element') {
-                    if ($element->{attrib}->{name} =~ /Search$/) {
-                        push @searchNamespaces, {
-                            type => ucfirst($element->{attrib}->{name}),
-                            namespace => $node->{attrib}->{namespace},
-                        };
-                    } else {
-                        push @recordNamespaces, {
-                            type => lcfirst($element->{attrib}->{name}),
-                            namespace => $node->{attrib}->{namespace},
-                        };
+                if (defined($element->{attrib}->{name})) {
+                    my $eleName = lcfirst($element->{attrib}->{name});
+                    if (($element->{name} eq 'element') ||
+                        (($element->{name} eq 'complexType')
+                         && defined($element->{content}->[0]->{content}->[0]->{attrib}->{base})
+                         && $element->{content}->[0]->{content}->[0]->{attrib}->{base} eq 'platformCore:Record')) {
+                        if ($element->{attrib}->{name} =~ /Search$/) {
+                            push @searchNamespaces, {
+                                type => ucfirst($element->{attrib}->{name}),
+                                namespace => $node->{attrib}->{namespace},
+                            };
+                        } elsif (!defined($recNamespace{$eleName})) {
+                            push @recordNamespaces, {
+                                type => $eleName,
+                                namespace => $node->{attrib}->{namespace},
+                            };
+                            $recNamespace{$eleName} = $node->{attrib}->{namespace};
+                        }
                     }
                 }
             }
@@ -240,7 +249,7 @@ if ($getWsdl->is_success) {
         else { die $getSchema->status_line; } 
     }
     
-    print "recordFields\n" . Dumper(@recordFields);
+    #print "recordFields\n" . Dumper(@recordFields);
     $hash_ref->{recordFields} = \@recordFields;
     $hash_ref->{searchNamespaces} = \@searchNamespaces;
     $hash_ref->{recordNamespaces} = \@recordNamespaces;

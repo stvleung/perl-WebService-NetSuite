@@ -179,7 +179,7 @@ sub BUILD { # sub new (this is the constructor)
     if ($debug) { SOAP::Lite->import(+trace => [debug => \&logMessage ]); }
     $self->_set_soap(SOAP::Lite->new(readable => 1));
     my $url = sprintf $soap_href, $self->nsdomain;
-    print "url=$url\n";
+    deb "url=$url\n";
     $self->soap->proxy($url);
 
     my $systemNamespaces = &WebService::NetSuite::Config::SystemNamespaces;
@@ -278,6 +278,16 @@ sub getHead {
     return $self->{LAST_HEAD};
 }
 
+# return full namespace for core, messages, common (all are in .platform)
+sub namespace {
+    my ($ns) = @_;
+    return $ns . '_' . $nsversion . '.platform';
+}
+
+#
+# Web Services Operations
+#
+
 sub getSelectValue {
     my ( $self, $recordType ) = @_;
 
@@ -345,12 +355,6 @@ sub getCustomization {
     }
 }
 
-# return full namespace for core, messages, common (all are in .platform)
-sub namespace {
-    my ($ns) = @_;
-    return $ns . '_' . $nsversion . '.platform';
-}
-
 sub get {
     my ( $self, $recordType, $recordInternalId ) = @_;
 
@@ -414,8 +418,7 @@ sub search {
         if ( defined $record_types->{$type}->{$searchType} ) {
             $searchTypeNamespace = $record_types->{$type}->{$searchType};
 
-        }
-        else {
+        } else {
             croak "Search type $searchType is not defined in a $type search";
         }
 
@@ -452,7 +455,6 @@ sub search {
                 my @searchValues;
                 for my $searchValue ( @{ $searchElement->{value} } )
                 {                                              # customField
-
                     if ( ref $searchValue->{value} eq 'ARRAY' ) {
                         my @customFieldValues;
                         for my $customFieldValue ( @{ $searchValue->{value} } )
@@ -788,13 +790,19 @@ sub _generate_auth_token {
 
 sub add {
     my ( $self, $recordType, $recordRef, %recordAttrs ) = @_;
-
-    $self->error("Invalid recordType: $recordType!")
-      if !defined $record_namespaces->{$recordType};
-
+    my $ns = $record_namespaces->{$recordType};
+    if (!defined($ns)) {
+        my $i = index($recordType, ':');
+        if ($i < 0) {
+            fatal "Invalid recordType: $recordType!";
+        } else {
+            $ns = substr($recordType, 0, $i);
+            $recordType = substr($recordType, $i+1);
+        }
+    }
+    deb "namespace for $recordType is " . $ns . "\n"; 
     my %recAttrs = (
-                'xsi:type' => $record_namespaces->{$recordType} . ':'
-                  . ucfirst($recordType)
+                'xsi:type' => $ns . ':' . ucfirst($recordType)
     );
 
     # Add recordAttrs to recAttrs.  This supports cases like where
@@ -827,7 +835,50 @@ sub add {
         } else {
             $self->error;
         }
+    }
+}
 
+sub upsert {
+    my ( $self, $recordType, $recordRef, %recordAttrs ) = @_;
+
+    fatal("Invalid recordType: $recordType!")
+      if !defined $record_namespaces->{$recordType};
+
+    my %recAttrs = (
+                'xsi:type' => $record_namespaces->{$recordType} . ':'
+                  . ucfirst($recordType)
+    );
+
+    # Add recordAttrs to recAttrs.  This supports cases like where
+    # ExpenseReport supports upserting externalId attr on the <record>
+    # element.  recordAttrs argument is optional and passed only when
+    # needed.
+    if (%recordAttrs) {
+        foreach my $x ( keys %recordAttrs ){
+            $recAttrs{ $x } = $recordAttrs{ $x };
+        }
+    }
+
+    $self->soap->on_action( sub { return 'upsert'; } );
+    my $som = $self->soap->upsert(
+        $self->_passport,
+        SOAP::Data->name(
+            'record' => \SOAP::Data->value(
+                $self->_parseRequest( ucfirst($recordType), $recordRef )
+            )
+          )->attr(\%recAttrs)
+    );
+
+    if ( $som->fault ) {
+        $self->error;
+    } else {
+        if ( $som->dataof("//upsertResponse/writeResponse/status")
+            ->attr->{'isSuccess'} eq 'true' ) {
+            return $som->dataof("//upsertResponse/writeResponse/baseRef")
+              ->attr->{'internalId'};
+        } else {
+            $self->error;
+        }
     }
 }
 
@@ -863,6 +914,75 @@ sub update {
             if ( $som->dataof("//updateResponse/writeResponse/status")
                 ->attr->{'isSuccess'} eq 'true' ) {
                 return $som->dataof("//updateResponse/writeResponse/baseRef")
+                  ->attr->{'internalId'};
+            } else {
+                $self->error;
+            }
+        } else {
+            $self->error;
+        }
+    }
+}
+
+sub attach {
+    my ( $self, $attachRequest ) = @_;
+
+    # example usage:
+    #    sub nsRecRef {
+    #        my ($rectype, $id) = @_;
+    #        return  { type => $rectype, internalId => $id };
+    #    }
+    #
+    #    my $attachRequest = {
+    #        attachTo        => nsRecRef('expenseReport', $erId),
+    #        attachedRecord  => nsRecRef('file',          $fid)
+    #    };
+    #    $ns->attach($attachRequest) or nsfatal 'error attaching';
+    # 
+    #   SOAP message will look something like this:
+    #
+    # <attach>
+    #   <attachReferece xsi:type="core_2013_2.platform:AttachBasicReference">
+    #     <attachTo internalId="2029" type="expenseReport"
+    #               xsi:type="core_2013_2.platform:RecordRef" />
+    #     
+    #     <attachedRecord internalId="5445" type="file"
+    #               xsi:type="core_2013_2.platform:RecordRef" />
+    #   </attachReferece>
+    # </attach>
+    #
+    # Only AttachBasicReference is supported at this time.
+
+
+    $self->soap->on_action( sub { return 'attach'; } );
+    my $attachTo = SOAP::Data->name('attachTo')->attr( {
+                internalId => $attachRequest->{attachTo}->{internalId},
+                type       => $attachRequest->{attachTo}->{type},
+                'xsi:type' => namespace('core') . ':RecordRef'
+            });
+    my $attachedRecord = SOAP::Data->name('attachedRecord')->attr( {
+                internalId => $attachRequest->{attachedRecord}->{internalId},
+                type       => $attachRequest->{attachedRecord}->{type},
+                'xsi:type' => namespace('core') . ':RecordRef'
+            });
+
+
+    my $som = $self->soap->attach(
+        $self->_passport,
+            SOAP::Data->name(
+                'attachReferece' => \SOAP::Data->value(
+                    $attachTo,
+                    $attachedRecord
+                ))->attr({'xsi:type' => namespace('core') . ':AttachBasicReference'})
+    );
+
+    if ( $som->fault ) {
+        $self->error;
+    } else {
+        if ( $som->match("//attachResponse/writeResponse/status") ) {
+            if ( $som->dataof("//attachResponse/writeResponse/status")
+                ->attr->{'isSuccess'} eq 'true' ) {
+                return $som->dataof("//attachResponse/writeResponse/baseRef")
                   ->attr->{'internalId'};
             } else {
                 $self->error;
@@ -927,7 +1047,8 @@ sub _parseRequest {
                       $listElement->{type};
 
                     $element->{value} = \SOAP::Data->name('value')
-                      ->value( $listElement->{value} );
+                      ->value( $listElement->{value} )
+                      ; # ->attr( { 'xsi:type' => 'xsd:string' } );
                     push @listElements, SOAP::Data->new( %{$element} );
                 } else { 
                     while ( my ( $key, $value ) = each %{$listElement} ) {
