@@ -20,7 +20,7 @@ use Encode;
 use WebService::NetSuite::Config;
 
 our $ME = 'WebService::NetSuite';
-our $VERSION = '0.04';
+our $VERSION = '0.06';
 
 our $nsversion = "2013_2";
 
@@ -1055,7 +1055,7 @@ sub _parseRequest {
             $ltype =~ s/.*://;
             #print "DEBUG: requestType=$requestType, key=$key, ltype=$ltype\n";
             if (defined $record_fields->{$ltype}) {
-                my @ftypes = keys $record_fields->{$ltype};
+                my @ftypes = keys %{ $record_fields->{$ltype} };
                 if (scalar @ftypes == 1) {
                     #print "DEBUG: ftype for $key is $ftype\n";
                     $listElementName = $ftypes[0];
